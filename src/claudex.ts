@@ -11,8 +11,10 @@ import {
   applyDefaultEffort,
   approxTokenCount,
   hasEffortFlag,
+  parseChatgptTokenFromAuthJson,
   parseClaudexArgs,
   parseApiKeyFromAuthJson,
+  parseCodexConfig,
   resolveUpstreamFromCodexConfig,
   sanitizeToolFields,
   type JsonObject,
@@ -44,8 +46,10 @@ const claudeSubcommands = new Set([
 
 interface RuntimeConfig {
   upstreamBaseUrl: string;
-  upstreamApiKey: string;
+  upstreamBearerToken: string;
+  upstreamExtraHeaders: Record<string, string>;
   forcedModel: string;
+  authMode: "provider-api-key" | "chatgpt-token" | "chatgpt-api-key";
 }
 
 interface ProxyOptions {
@@ -104,39 +108,85 @@ function resolveCodexPaths(): { configPath: string; authPath: string } {
 function loadRuntimeConfig(): RuntimeConfig {
   const { configPath, authPath } = resolveCodexPaths();
 
-  if (!existsSync(configPath)) {
-    fail(`missing config file: ${configPath}`);
-  }
-
-  const configContents = readFileSync(configPath, "utf8");
-  const resolved = resolveUpstreamFromCodexConfig(configContents, {
-    providerOverride: process.env.CLAUDEX_MODEL_PROVIDER,
-    baseUrlOverride: process.env.CLAUDEX_UPSTREAM_BASE_URL,
-  });
-
-  const forcedModel = (process.env.CLAUDEX_FORCE_MODEL || resolved.model || "gpt-5.3-codex").trim();
-
+  const providerOverride = process.env.CLAUDEX_MODEL_PROVIDER;
+  const baseUrlOverride = process.env.CLAUDEX_UPSTREAM_BASE_URL;
+  const chatgptBaseUrl =
+    process.env.CLAUDEX_CHATGPT_BASE_URL?.trim() || "https://chatgpt.com/backend-api/codex";
   const envApiKey = process.env.CLAUDEX_UPSTREAM_API_KEY || process.env.OPENAI_API_KEY;
-  if (envApiKey?.trim()) {
-    return {
-      upstreamBaseUrl: resolved.baseUrl,
-      upstreamApiKey: envApiKey.trim(),
-      forcedModel,
+  const envBearerToken =
+    process.env.CLAUDEX_UPSTREAM_BEARER_TOKEN || process.env.CLAUDEX_CHATGPT_BEARER_TOKEN;
+  const envChatgptAccountId = process.env.CLAUDEX_CHATGPT_ACCOUNT_ID;
+
+  let configContents = "";
+  let modelFromConfig: string | undefined;
+  let resolvedProvider: ReturnType<typeof resolveUpstreamFromCodexConfig> | null = null;
+  if (existsSync(configPath)) {
+    configContents = readFileSync(configPath, "utf8");
+    modelFromConfig = parseCodexConfig(configContents).model;
+    try {
+      resolvedProvider = resolveUpstreamFromCodexConfig(configContents, {
+        providerOverride,
+        baseUrlOverride,
+      });
+    } catch {
+      resolvedProvider = null;
+    }
+  } else if (baseUrlOverride?.trim()) {
+    resolvedProvider = {
+      baseUrl: baseUrlOverride.trim(),
+      providerKey: providerOverride,
+      model: undefined,
     };
   }
 
-  if (!existsSync(authPath)) {
+  const forcedModel = (process.env.CLAUDEX_FORCE_MODEL || modelFromConfig || "gpt-5.3-codex").trim();
+
+  const authFileExists = existsSync(authPath);
+  const authContents = authFileExists ? readFileSync(authPath, "utf8") : "";
+  const authUnavailable = !authFileExists && !envApiKey?.trim() && !envBearerToken?.trim();
+  if (authUnavailable) {
     fail(`missing auth file: ${authPath}`);
   }
 
-  const authContents = readFileSync(authPath, "utf8");
-  const upstreamApiKey = parseApiKeyFromAuthJson(authContents);
+  if (resolvedProvider?.baseUrl?.trim()) {
+    const upstreamBearerToken = parseApiKeyFromAuthJson(authContents, envApiKey);
+    return {
+      upstreamBaseUrl: resolvedProvider.baseUrl,
+      upstreamBearerToken,
+      upstreamExtraHeaders: {},
+      forcedModel,
+      authMode: "provider-api-key",
+    };
+  }
 
-  return {
-    upstreamBaseUrl: resolved.baseUrl,
-    upstreamApiKey,
-    forcedModel,
-  };
+  try {
+    const tokenAuth = parseChatgptTokenFromAuthJson(authContents, {
+      envBearerToken,
+      envAccountId: envChatgptAccountId,
+    });
+
+    const extraHeaders: Record<string, string> = {};
+    if (tokenAuth.accountId) {
+      extraHeaders["chatgpt-account-id"] = tokenAuth.accountId;
+    }
+
+    return {
+      upstreamBaseUrl: chatgptBaseUrl,
+      upstreamBearerToken: tokenAuth.bearerToken,
+      upstreamExtraHeaders: extraHeaders,
+      forcedModel,
+      authMode: "chatgpt-token",
+    };
+  } catch {
+    const upstreamBearerToken = parseApiKeyFromAuthJson(authContents, envApiKey);
+    return {
+      upstreamBaseUrl: chatgptBaseUrl,
+      upstreamBearerToken,
+      upstreamExtraHeaders: {},
+      forcedModel,
+      authMode: "chatgpt-api-key",
+    };
+  }
 }
 
 function resolveClaudeBinary(): string {
@@ -222,17 +272,40 @@ function copyHeadersFromUpstream(headers: Headers): Record<string, string> {
   return out;
 }
 
+function normalizeBasePath(pathname: string): string {
+  if (pathname === "/" || pathname.trim().length === 0) {
+    return "";
+  }
+  return `/${pathname.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+}
+
+function buildUpstreamUrl(upstreamOrigin: URL, requestPath: string): URL {
+  const incoming = new URL(requestPath, "http://localhost");
+  const basePath = normalizeBasePath(upstreamOrigin.pathname);
+
+  let resolvedPath = incoming.pathname;
+  if (basePath && resolvedPath !== basePath && !resolvedPath.startsWith(`${basePath}/`)) {
+    resolvedPath = `${basePath}${resolvedPath.startsWith("/") ? "" : "/"}${resolvedPath}`;
+  }
+
+  const upstream = new URL(upstreamOrigin.toString());
+  upstream.pathname = resolvedPath;
+  upstream.search = incoming.search;
+  return upstream;
+}
+
 async function proxyRaw(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   bodyBuffer: Buffer,
   requestPath: string,
   upstreamOrigin: URL,
-  upstreamApiKey: string,
+  upstreamBearerToken: string,
+  upstreamExtraHeaders: Record<string, string>,
   overrideBody: JsonObject | null = null
 ): Promise<void> {
   const headers: Record<string, string> = {
-    authorization: `Bearer ${upstreamApiKey}`,
+    authorization: `Bearer ${upstreamBearerToken}`,
   };
 
   for (const [key, value] of Object.entries(req.headers)) {
@@ -245,6 +318,9 @@ async function proxyRaw(
     }
     headers[normalized] = Array.isArray(value) ? value.join(", ") : value;
   }
+  for (const [key, value] of Object.entries(upstreamExtraHeaders)) {
+    headers[key.toLowerCase()] = value;
+  }
 
   let outboundBody = bodyBuffer;
   if (overrideBody !== null) {
@@ -256,7 +332,7 @@ async function proxyRaw(
     headers["content-length"] = String(outboundBody.length);
   }
 
-  const upstreamUrl = new URL(requestPath, upstreamOrigin);
+  const upstreamUrl = buildUpstreamUrl(upstreamOrigin, requestPath);
   const upstreamResponse = await fetch(upstreamUrl, {
     method: req.method,
     headers,
@@ -276,7 +352,8 @@ async function startProxy(
   listenHost: string,
   listenPort: number,
   upstreamOrigin: URL,
-  upstreamApiKey: string,
+  upstreamBearerToken: string,
+  upstreamExtraHeaders: Record<string, string>,
   options: ProxyOptions
 ): Promise<http.Server> {
   const server = http.createServer(async (req, res) => {
@@ -364,12 +441,29 @@ async function startProxy(
           );
         }
 
-        await proxyRaw(req, res, bodyBuffer, url.pathname + url.search, upstreamOrigin, upstreamApiKey, parsed);
+        await proxyRaw(
+          req,
+          res,
+          bodyBuffer,
+          url.pathname + url.search,
+          upstreamOrigin,
+          upstreamBearerToken,
+          upstreamExtraHeaders,
+          parsed
+        );
         return;
       }
 
       const bodyBuffer = await readBody(req);
-      await proxyRaw(req, res, bodyBuffer, url.pathname + url.search, upstreamOrigin, upstreamApiKey);
+      await proxyRaw(
+        req,
+        res,
+        bodyBuffer,
+        url.pathname + url.search,
+        upstreamOrigin,
+        upstreamBearerToken,
+        upstreamExtraHeaders
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       writeJson(res, 500, {
@@ -401,15 +495,24 @@ async function main(): Promise<void> {
     fail("invalid CLAUDEX_PORT value");
   }
 
-  const proxyServer = await startProxy(listenHost, listenPort, upstreamOrigin, runtime.upstreamApiKey, {
-    forcedModel: runtime.forcedModel,
-    defaultReasoningEffort,
-    preserveClientEffort,
-    debug,
-  });
+  const proxyServer = await startProxy(
+    listenHost,
+    listenPort,
+    upstreamOrigin,
+    runtime.upstreamBearerToken,
+    runtime.upstreamExtraHeaders,
+    {
+      forcedModel: runtime.forcedModel,
+      defaultReasoningEffort,
+      preserveClientEffort,
+      debug,
+    }
+  );
 
   const proxyUrl = `http://${listenHost}:${listenPort}`;
-  console.error(`claudex: proxy=${proxyUrl} force_model=${runtime.forcedModel} safe_mode=${safeMode}`);
+  console.error(
+    `claudex: proxy=${proxyUrl} force_model=${runtime.forcedModel} safe_mode=${safeMode} auth_mode=${runtime.authMode}`
+  );
 
   const injectedArgs = [...args];
   const forcedLoginMethod = (process.env.CLAUDEX_FORCE_LOGIN_METHOD || "console").trim();
@@ -422,7 +525,7 @@ async function main(): Promise<void> {
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ANTHROPIC_BASE_URL: proxyUrl,
-    ANTHROPIC_API_KEY: runtime.upstreamApiKey,
+    ANTHROPIC_API_KEY: runtime.upstreamBearerToken,
     ANTHROPIC_MODEL: runtime.forcedModel,
     ANTHROPIC_SMALL_FAST_MODEL: runtime.forcedModel,
     ANTHROPIC_DEFAULT_OPUS_MODEL: runtime.forcedModel,

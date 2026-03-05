@@ -12,11 +12,11 @@ You can download binaries from [Releases](https://github.com/EdamAme-x/claudex/r
 bun install
 ```
 
-1. Ensure Codex config files exist:
+1. Ensure Codex auth file exists (config is optional but recommended):
 
 ```text
-~/.codex/config.toml
 ~/.codex/auth.json
+~/.codex/config.toml
 ```
 
 2. Run:
@@ -40,13 +40,21 @@ Optional environment variables:
 - `CLAUDEX_MODEL_PROVIDER` (overrides `model_provider` selection)
 - `CLAUDEX_UPSTREAM_BASE_URL` (force endpoint URL)
 - `CLAUDEX_UPSTREAM_API_KEY` (force API key)
+- `CLAUDEX_UPSTREAM_BEARER_TOKEN` (force bearer token for ChatGPT token mode)
+- `CLAUDEX_CHATGPT_BEARER_TOKEN` (alias of `CLAUDEX_UPSTREAM_BEARER_TOKEN`)
+- `CLAUDEX_CHATGPT_ACCOUNT_ID` (override `ChatGPT-Account-Id` header)
+- `CLAUDEX_CHATGPT_BASE_URL` (default: `https://chatgpt.com/backend-api/codex`)
 - `CLAUDEX_FORCE_LOGIN_METHOD` (default: `console`; set to `none` to disable injection)
 - `CLAUDEX_PORT`
 - `CLAUDEX_DEBUG=1`
 
 Authentication note:
 
-- `claudex` sets `ANTHROPIC_API_KEY` to your upstream API key and, unless you pass `--settings` yourself, injects `--settings {"forceLoginMethod":"console"}` to avoid Claude.ai-subscription-first login flows.
+- Priority is:
+  1. Use `model_provider` / `CLAUDEX_UPSTREAM_BASE_URL` when resolvable, authenticated via API key.
+  2. If no provider is resolvable, fall back to official ChatGPT endpoint (`https://chatgpt.com/backend-api/codex`) and use `tokens.id_token` (then `tokens.access_token`) from `~/.codex/auth.json`.
+- In token mode, if `tokens.account_id` exists, `claudex` sends it as `ChatGPT-Account-Id`.
+- `claudex` sets `ANTHROPIC_API_KEY` to the upstream bearer credential and, unless you pass `--settings` yourself, injects `--settings {"forceLoginMethod":"console"}` to avoid Claude.ai-subscription-first login flows.
 
 ## Quality gates
 

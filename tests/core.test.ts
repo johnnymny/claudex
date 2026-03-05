@@ -3,6 +3,7 @@ import {
   applyDefaultEffort,
   approxTokenCount,
   hasEffortFlag,
+  parseChatgptTokenFromAuthJson,
   parseClaudexArgs,
   parseApiKeyFromAuthJson,
   parseCodexConfig,
@@ -90,6 +91,53 @@ describe("parseApiKeyFromAuthJson", () => {
   test("throws without key", () => {
     const authJson = JSON.stringify({ tokens: { access_token: "x" } });
     expect(() => parseApiKeyFromAuthJson(authJson)).toThrow("failed to read OPENAI API key");
+  });
+});
+
+describe("parseChatgptTokenFromAuthJson", () => {
+  test("prefers tokens.id_token and reads account_id", () => {
+    const authJson = JSON.stringify({
+      tokens: {
+        id_token: "id-token-value",
+        access_token: "access-token-value",
+        account_id: "acct_123",
+      },
+    });
+    const parsed = parseChatgptTokenFromAuthJson(authJson);
+    expect(parsed.bearerToken).toBe("id-token-value");
+    expect(parsed.accountId).toBe("acct_123");
+    expect(parsed.source).toBe("tokens.id_token");
+  });
+
+  test("falls back to tokens.access_token", () => {
+    const authJson = JSON.stringify({
+      tokens: {
+        access_token: "access-token-value",
+      },
+    });
+    const parsed = parseChatgptTokenFromAuthJson(authJson);
+    expect(parsed.bearerToken).toBe("access-token-value");
+    expect(parsed.source).toBe("tokens.access_token");
+  });
+
+  test("env bearer token wins", () => {
+    const authJson = JSON.stringify({
+      tokens: {
+        id_token: "id-token-value",
+      },
+    });
+    const parsed = parseChatgptTokenFromAuthJson(authJson, {
+      envBearerToken: "env-token-value",
+      envAccountId: "acct_env",
+    });
+    expect(parsed.bearerToken).toBe("env-token-value");
+    expect(parsed.accountId).toBe("acct_env");
+    expect(parsed.source).toBe("env");
+  });
+
+  test("throws without token fields", () => {
+    const authJson = JSON.stringify({ OPENAI_API_KEY: "sk-test" });
+    expect(() => parseChatgptTokenFromAuthJson(authJson)).toThrow("failed to read ChatGPT token");
   });
 });
 

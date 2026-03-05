@@ -124,33 +124,108 @@ export function resolveUpstreamFromCodexConfig(
   throw new Error("failed to resolve base_url from ~/.codex/config.toml");
 }
 
-export function parseApiKeyFromAuthJson(contents: string, envApiKey?: string): string {
-  if (envApiKey?.trim()) {
-    return envApiKey.trim();
-  }
-
-  let parsed: any;
+function parseAuthJson(contents: string): any {
   try {
-    parsed = JSON.parse(contents);
+    return JSON.parse(contents);
   } catch {
     throw new Error("failed to parse ~/.codex/auth.json as JSON");
   }
+}
 
-  const candidates = [
-    parsed?.OPENAI_API_KEY,
-    parsed?.openai_api_key,
-    parsed?.api_key,
-    parsed?.openai?.api_key,
-    parsed?.providers?.openai?.api_key,
-  ];
-
+function firstNonEmptyString(candidates: unknown[]): string | undefined {
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim().length > 0) {
       return candidate.trim();
     }
   }
+  return undefined;
+}
+
+export function parseApiKeyFromAuthJson(contents: string, envApiKey?: string): string {
+  if (envApiKey?.trim()) {
+    return envApiKey.trim();
+  }
+
+  const parsed = parseAuthJson(contents);
+
+  const apiKey = firstNonEmptyString([
+    parsed?.OPENAI_API_KEY,
+    parsed?.openai_api_key,
+    parsed?.api_key,
+    parsed?.openai?.api_key,
+    parsed?.providers?.openai?.api_key,
+  ]);
+  if (apiKey) {
+    return apiKey;
+  }
 
   throw new Error("failed to read OPENAI API key from ~/.codex/auth.json");
+}
+
+export interface ParsedChatgptTokenFromAuth {
+  bearerToken: string;
+  accountId?: string;
+  source: "env" | "tokens.id_token" | "tokens.access_token" | "id_token" | "access_token";
+}
+
+export function parseChatgptTokenFromAuthJson(
+  contents: string,
+  options: {
+    envBearerToken?: string;
+    envAccountId?: string;
+  } = {}
+): ParsedChatgptTokenFromAuth {
+  if (options.envBearerToken?.trim()) {
+    let parsed: any = {};
+    if (contents.trim().length > 0) {
+      parsed = parseAuthJson(contents);
+    }
+    const accountId = firstNonEmptyString([
+      options.envAccountId,
+      parsed?.tokens?.account_id,
+      parsed?.account_id,
+      parsed?.chatgpt_account_id,
+      parsed?.chatgptAccountId,
+    ]);
+    return {
+      bearerToken: options.envBearerToken.trim(),
+      accountId,
+      source: "env",
+    };
+  }
+
+  const parsed = parseAuthJson(contents);
+  const accountId = firstNonEmptyString([
+    options.envAccountId,
+    parsed?.tokens?.account_id,
+    parsed?.account_id,
+    parsed?.chatgpt_account_id,
+    parsed?.chatgptAccountId,
+  ]);
+
+  const orderedCandidates: Array<{
+    value: unknown;
+    source: ParsedChatgptTokenFromAuth["source"];
+  }> = [
+    { value: parsed?.tokens?.id_token, source: "tokens.id_token" },
+    { value: parsed?.tokens?.access_token, source: "tokens.access_token" },
+    { value: parsed?.id_token, source: "id_token" },
+    { value: parsed?.access_token, source: "access_token" },
+  ];
+
+  for (const candidate of orderedCandidates) {
+    if (typeof candidate.value === "string" && candidate.value.trim().length > 0) {
+      return {
+        bearerToken: candidate.value.trim(),
+        accountId,
+        source: candidate.source,
+      };
+    }
+  }
+
+  throw new Error(
+    "failed to read ChatGPT token from ~/.codex/auth.json (expected tokens.id_token or tokens.access_token)"
+  );
 }
 
 export function approxTokenCount(body: JsonObject): number {
