@@ -16,7 +16,7 @@ import {
   resolveUpstreamFromCodexConfig,
   sanitizeToolFields,
   type JsonObject,
-} from "./core";
+} from "./core.ts";
 
 const rawArgs = process.argv.slice(2);
 const parsedArgs = parseClaudexArgs(rawArgs);

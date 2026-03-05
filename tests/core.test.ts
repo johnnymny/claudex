@@ -8,7 +8,7 @@ import {
   parseCodexConfig,
   resolveUpstreamFromCodexConfig,
   sanitizeToolFields,
-} from "../src/core";
+} from "../src/core.ts";
 
 describe("hasEffortFlag", () => {
   test("detects --effort and --effort=", () => {
