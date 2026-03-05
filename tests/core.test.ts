@@ -22,13 +22,20 @@ describe("parseClaudexArgs", () => {
   test("default safe mode is true", () => {
     const parsed = parseClaudexArgs(["-p", "hello"]);
     expect(parsed.safeMode).toBe(true);
+    expect(parsed.hasSettingsArg).toBe(false);
     expect(parsed.claudeArgs).toEqual(["-p", "hello"]);
   });
 
   test("consumes --no-safe and disables safe mode", () => {
     const parsed = parseClaudexArgs(["--no-safe", "-p", "hello"]);
     expect(parsed.safeMode).toBe(false);
+    expect(parsed.hasSettingsArg).toBe(false);
     expect(parsed.claudeArgs).toEqual(["-p", "hello"]);
+  });
+
+  test("detects --settings argument", () => {
+    expect(parseClaudexArgs(["--settings", "{\"a\":1}"]).hasSettingsArg).toBe(true);
+    expect(parseClaudexArgs(["--settings={\"a\":1}"]).hasSettingsArg).toBe(true);
   });
 });
 

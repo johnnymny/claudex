@@ -40,8 +40,13 @@ Optional environment variables:
 - `CLAUDEX_MODEL_PROVIDER` (overrides `model_provider` selection)
 - `CLAUDEX_UPSTREAM_BASE_URL` (force endpoint URL)
 - `CLAUDEX_UPSTREAM_API_KEY` (force API key)
+- `CLAUDEX_FORCE_LOGIN_METHOD` (default: `console`; set to `none` to disable injection)
 - `CLAUDEX_PORT`
 - `CLAUDEX_DEBUG=1`
+
+Authentication note:
+
+- `claudex` sets `ANTHROPIC_API_KEY` to your upstream API key and, unless you pass `--settings` yourself, injects `--settings {"forceLoginMethod":"console"}` to avoid Claude.ai-subscription-first login flows.
 
 ## Quality gates
 

@@ -21,10 +21,26 @@ import {
 const rawArgs = process.argv.slice(2);
 const parsedArgs = parseClaudexArgs(rawArgs);
 const args = parsedArgs.claudeArgs;
+const hasSettingsArg = parsedArgs.hasSettingsArg;
 const safeMode = parsedArgs.safeMode;
 const preserveClientEffort = hasEffortFlag(args);
 const defaultReasoningEffort = process.env.CLAUDEX_DEFAULT_REASONING_EFFORT || "xhigh";
 const debug = process.env.CLAUDEX_DEBUG === "1";
+const claudeSubcommands = new Set([
+  "agents",
+  "auth",
+  "doctor",
+  "install",
+  "mcp",
+  "open",
+  "plugin",
+  "server",
+  "setup-token",
+  "update",
+  "upgrade",
+  "remote-control",
+  "rc",
+]);
 
 interface RuntimeConfig {
   upstreamBaseUrl: string;
@@ -395,10 +411,18 @@ async function main(): Promise<void> {
   const proxyUrl = `http://${listenHost}:${listenPort}`;
   console.error(`claudex: proxy=${proxyUrl} force_model=${runtime.forcedModel} safe_mode=${safeMode}`);
 
+  const injectedArgs = [...args];
+  const forcedLoginMethod = (process.env.CLAUDEX_FORCE_LOGIN_METHOD || "console").trim();
+  const isSubcommandInvocation =
+    injectedArgs.length > 0 && !injectedArgs[0].startsWith("-") && claudeSubcommands.has(injectedArgs[0]);
+  if (!isSubcommandInvocation && !hasSettingsArg && forcedLoginMethod.length > 0 && forcedLoginMethod !== "none") {
+    injectedArgs.push("--settings", JSON.stringify({ forceLoginMethod: forcedLoginMethod }));
+  }
+
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ANTHROPIC_BASE_URL: proxyUrl,
-    ANTHROPIC_API_KEY: "claudex-local",
+    ANTHROPIC_API_KEY: runtime.upstreamApiKey,
     ANTHROPIC_MODEL: runtime.forcedModel,
     ANTHROPIC_SMALL_FAST_MODEL: runtime.forcedModel,
     ANTHROPIC_DEFAULT_OPUS_MODEL: runtime.forcedModel,
@@ -412,7 +436,7 @@ async function main(): Promise<void> {
     delete childEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
   }
 
-  const child = spawn(claudeBinary, args, {
+  const child = spawn(claudeBinary, injectedArgs, {
     stdio: "inherit",
     env: childEnv,
   });
