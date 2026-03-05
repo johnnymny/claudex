@@ -4,22 +4,128 @@ export function hasEffortFlag(args: string[]): boolean {
   return args.some((arg) => arg === "--effort" || arg.startsWith("--effort="));
 }
 
-export function parseOpenAiConfig(
+export interface ParsedCodexConfig {
+  model?: string;
+  modelProvider?: string;
+  providers: Record<
+    string,
+    {
+      key: string;
+      name?: string;
+      baseUrl?: string;
+      wireApi?: string;
+    }
+  >;
+}
+
+function parseTopLevelString(contents: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = contents.match(new RegExp(`^\\s*${escaped}\\s*=\\s*"([^"]+)"`, "m"));
+  return match?.[1]?.trim();
+}
+
+export function parseCodexConfig(contents: string): ParsedCodexConfig {
+  const providers: ParsedCodexConfig["providers"] = {};
+  const headerRegex = /^\[model_providers\.([^\]]+)\]\s*$/gm;
+
+  const headers = Array.from(contents.matchAll(headerRegex));
+  for (let i = 0; i < headers.length; i += 1) {
+    const current = headers[i];
+    const next = headers[i + 1];
+
+    const providerKey = current[1]?.trim();
+    if (!providerKey) {
+      continue;
+    }
+
+    const blockStart = (current.index ?? 0) + current[0].length;
+    const blockEnd = next?.index ?? contents.length;
+    const block = contents.slice(blockStart, blockEnd);
+
+    providers[providerKey] = {
+      key: providerKey,
+      name: parseTopLevelString(block, "name"),
+      baseUrl: parseTopLevelString(block, "base_url"),
+      wireApi: parseTopLevelString(block, "wire_api"),
+    };
+  }
+
+  return {
+    model: parseTopLevelString(contents, "model"),
+    modelProvider: parseTopLevelString(contents, "model_provider"),
+    providers,
+  };
+}
+
+export function resolveUpstreamFromCodexConfig(
   contents: string,
-  envApiKey?: string
-): { upstreamBaseUrl: string; upstreamApiKey: string } {
-  const upstreamBaseUrl = contents.match(/^\s*base_url\s*=\s*"([^"]+)"/m)?.[1]?.trim();
-  const keyInFile = contents.match(/"OPENAI_API_KEY"\s*:\s*"([^"]+)"/m)?.[1]?.trim();
-  const upstreamApiKey = envApiKey?.trim() || keyInFile;
+  options: {
+    providerOverride?: string;
+    baseUrlOverride?: string;
+  } = {}
+): { baseUrl: string; providerKey?: string; model?: string } {
+  const parsed = parseCodexConfig(contents);
 
-  if (!upstreamBaseUrl) {
-    throw new Error("failed to read base_url from OPENAI.md");
-  }
-  if (!upstreamApiKey) {
-    throw new Error("failed to read OPENAI_API_KEY from OPENAI.md");
+  if (options.baseUrlOverride && options.baseUrlOverride.trim()) {
+    return {
+      baseUrl: options.baseUrlOverride.trim(),
+      providerKey: options.providerOverride || parsed.modelProvider,
+      model: parsed.model,
+    };
   }
 
-  return { upstreamBaseUrl, upstreamApiKey };
+  const preferredProvider = options.providerOverride || parsed.modelProvider;
+  if (preferredProvider) {
+    const chosen = parsed.providers[preferredProvider];
+    if (chosen?.baseUrl?.trim()) {
+      return {
+        baseUrl: chosen.baseUrl.trim(),
+        providerKey: preferredProvider,
+        model: parsed.model,
+      };
+    }
+  }
+
+  for (const provider of Object.values(parsed.providers)) {
+    if (provider.baseUrl?.trim()) {
+      return {
+        baseUrl: provider.baseUrl.trim(),
+        providerKey: provider.key,
+        model: parsed.model,
+      };
+    }
+  }
+
+  throw new Error("failed to resolve base_url from ~/.codex/config.toml");
+}
+
+export function parseApiKeyFromAuthJson(contents: string, envApiKey?: string): string {
+  if (envApiKey?.trim()) {
+    return envApiKey.trim();
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new Error("failed to parse ~/.codex/auth.json as JSON");
+  }
+
+  const candidates = [
+    parsed?.OPENAI_API_KEY,
+    parsed?.openai_api_key,
+    parsed?.api_key,
+    parsed?.openai?.api_key,
+    parsed?.providers?.openai?.api_key,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  throw new Error("failed to read OPENAI API key from ~/.codex/auth.json");
 }
 
 export function approxTokenCount(body: JsonObject): number {

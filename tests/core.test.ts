@@ -3,7 +3,9 @@ import {
   applyDefaultEffort,
   approxTokenCount,
   hasEffortFlag,
-  parseOpenAiConfig,
+  parseApiKeyFromAuthJson,
+  parseCodexConfig,
+  resolveUpstreamFromCodexConfig,
   sanitizeToolFields,
 } from "../src/core";
 
@@ -15,39 +17,64 @@ describe("hasEffortFlag", () => {
   });
 });
 
-describe("parseOpenAiConfig", () => {
-  const openAiMd = `
-    [model_providers.unlimitex]
-    base_url = "https://example.com/v1"
+describe("parseCodexConfig", () => {
+  const configToml = `
+model_provider = "unlimitex"
+model = "gpt-5.3-codex"
 
-    {
-      "OPENAI_API_KEY": "from-file-key"
-    }
-  `;
+[model_providers.voids]
+name = "voids"
+base_url = "https://voids.example/v1"
+wire_api = "responses"
 
-  test("parses base_url and API key", () => {
-    const parsed = parseOpenAiConfig(openAiMd);
-    expect(parsed.upstreamBaseUrl).toBe("https://example.com/v1");
-    expect(parsed.upstreamApiKey).toBe("from-file-key");
+[model_providers.unlimitex]
+name = "unlimitex"
+base_url = "https://unlimitex.example/v1"
+wire_api = "responses"
+`;
+
+  test("parses model and providers", () => {
+    const parsed = parseCodexConfig(configToml);
+    expect(parsed.modelProvider).toBe("unlimitex");
+    expect(parsed.model).toBe("gpt-5.3-codex");
+    expect(parsed.providers.unlimitex.baseUrl).toBe("https://unlimitex.example/v1");
   });
 
-  test("prefers environment API key", () => {
-    const parsed = parseOpenAiConfig(openAiMd, "env-key");
-    expect(parsed.upstreamApiKey).toBe("env-key");
+  test("resolves selected provider base url", () => {
+    const resolved = resolveUpstreamFromCodexConfig(configToml);
+    expect(resolved.baseUrl).toBe("https://unlimitex.example/v1");
+    expect(resolved.model).toBe("gpt-5.3-codex");
   });
 
-  test("throws when required values are missing", () => {
-    expect(() => parseOpenAiConfig("")).toThrow("failed to read base_url");
+  test("base url override wins", () => {
+    const resolved = resolveUpstreamFromCodexConfig(configToml, {
+      baseUrlOverride: "https://override.example/v1",
+    });
+    expect(resolved.baseUrl).toBe("https://override.example/v1");
+  });
+});
+
+describe("parseApiKeyFromAuthJson", () => {
+  test("reads OPENAI_API_KEY", () => {
+    const authJson = JSON.stringify({ OPENAI_API_KEY: "sk-test" });
+    expect(parseApiKeyFromAuthJson(authJson)).toBe("sk-test");
+  });
+
+  test("env override wins", () => {
+    const authJson = JSON.stringify({ OPENAI_API_KEY: "sk-file" });
+    expect(parseApiKeyFromAuthJson(authJson, "sk-env")).toBe("sk-env");
+  });
+
+  test("throws without key", () => {
+    const authJson = JSON.stringify({ tokens: { access_token: "x" } });
+    expect(() => parseApiKeyFromAuthJson(authJson)).toThrow("failed to read OPENAI API key");
   });
 });
 
 describe("approxTokenCount", () => {
   test("counts text parts", () => {
     const count = approxTokenCount({
-      messages: [
-        { content: "abcd" },
-        { content: [{ text: "1234" }, { content: "abcd" }] },
-      ],
+      messages: [{ content: "abcd" }, { content: [{ text: "1234" }, { content: "abcd" }] }],
     });
     expect(count).toBeGreaterThanOrEqual(3);
   });

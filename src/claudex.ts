@@ -6,20 +6,34 @@ import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import {
   applyDefaultEffort,
   approxTokenCount,
   hasEffortFlag,
-  parseOpenAiConfig,
+  parseApiKeyFromAuthJson,
+  resolveUpstreamFromCodexConfig,
   sanitizeToolFields,
   type JsonObject,
 } from "./core";
 
 const args = process.argv.slice(2);
 const preserveClientEffort = hasEffortFlag(args);
-const forcedModel = process.env.CLAUDEX_FORCE_MODEL || "gpt-5.3-codex";
 const defaultReasoningEffort = process.env.CLAUDEX_DEFAULT_REASONING_EFFORT || "xhigh";
 const debug = process.env.CLAUDEX_DEBUG === "1";
+
+interface RuntimeConfig {
+  upstreamBaseUrl: string;
+  upstreamApiKey: string;
+  forcedModel: string;
+}
+
+interface ProxyOptions {
+  forcedModel: string;
+  defaultReasoningEffort: string;
+  preserveClientEffort: boolean;
+  debug: boolean;
+}
 
 function fail(message: string): never {
   console.error(`claudex: ${message}`);
@@ -35,30 +49,49 @@ function ensureExecutable(path: string): boolean {
   }
 }
 
-function resolveOpenAiConfigPath(): string {
-  if (process.env.CLAUDEX_OPENAI_MD) {
-    return process.env.CLAUDEX_OPENAI_MD;
-  }
-
-  const entryPath = process.argv[1] ?? process.execPath;
-  const scriptPath = realpathSync(entryPath);
-  const scriptDir = dirname(scriptPath);
-  return join(scriptDir, "OPENAI.md");
+function resolveCodexPaths(): { configPath: string; authPath: string } {
+  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+  const configPath = process.env.CLAUDEX_CODEX_CONFIG?.trim() || join(codexHome, "config.toml");
+  const authPath = process.env.CLAUDEX_CODEX_AUTH?.trim() || join(codexHome, "auth.json");
+  return { configPath, authPath };
 }
 
-function readOpenAiConfig(openAiMdPath: string): { upstreamBaseUrl: string; upstreamApiKey: string } {
-  if (!existsSync(openAiMdPath)) {
-    fail(`missing file: ${openAiMdPath}`);
+function loadRuntimeConfig(): RuntimeConfig {
+  const { configPath, authPath } = resolveCodexPaths();
+
+  if (!existsSync(configPath)) {
+    fail(`missing config file: ${configPath}`);
   }
 
-  const contents = readFileSync(openAiMdPath, "utf8");
+  const configContents = readFileSync(configPath, "utf8");
+  const resolved = resolveUpstreamFromCodexConfig(configContents, {
+    providerOverride: process.env.CLAUDEX_MODEL_PROVIDER,
+    baseUrlOverride: process.env.CLAUDEX_UPSTREAM_BASE_URL,
+  });
 
-  try {
-    return parseOpenAiConfig(contents, process.env.OPENAI_API_KEY);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    fail(`${message} (${openAiMdPath})`);
+  const forcedModel = (process.env.CLAUDEX_FORCE_MODEL || resolved.model || "gpt-5.3-codex").trim();
+
+  const envApiKey = process.env.CLAUDEX_UPSTREAM_API_KEY || process.env.OPENAI_API_KEY;
+  if (envApiKey?.trim()) {
+    return {
+      upstreamBaseUrl: resolved.baseUrl,
+      upstreamApiKey: envApiKey.trim(),
+      forcedModel,
+    };
   }
+
+  if (!existsSync(authPath)) {
+    fail(`missing auth file: ${authPath}`);
+  }
+
+  const authContents = readFileSync(authPath, "utf8");
+  const upstreamApiKey = parseApiKeyFromAuthJson(authContents);
+
+  return {
+    upstreamBaseUrl: resolved.baseUrl,
+    upstreamApiKey,
+    forcedModel,
+  };
 }
 
 function resolveClaudeBinary(): string {
@@ -200,7 +233,8 @@ async function startProxy(
   listenHost: string,
   listenPort: number,
   upstreamOrigin: URL,
-  upstreamApiKey: string
+  upstreamApiKey: string,
+  options: ProxyOptions
 ): Promise<http.Server> {
   const server = http.createServer(async (req, res) => {
     try {
@@ -211,7 +245,7 @@ async function startProxy(
       if (method === "GET" && path === "/health") {
         writeJson(res, 200, {
           ok: true,
-          forced_model: forcedModel,
+          forced_model: options.forcedModel,
           upstream: upstreamOrigin.origin + upstreamOrigin.pathname,
         });
         return;
@@ -222,7 +256,7 @@ async function startProxy(
           object: "list",
           data: [
             {
-              id: forcedModel,
+              id: options.forcedModel,
               object: "model",
               created: Math.floor(Date.now() / 1000),
               owned_by: "claudex",
@@ -272,18 +306,18 @@ async function startProxy(
         }
 
         const originalModel = String(parsed.model ?? "");
-        parsed.model = forcedModel;
+        parsed.model = options.forcedModel;
         applyDefaultEffort(parsed, {
-          forcedModel,
-          defaultReasoningEffort,
-          preserveClientEffort,
+          forcedModel: options.forcedModel,
+          defaultReasoningEffort: options.defaultReasoningEffort,
+          preserveClientEffort: options.preserveClientEffort,
         });
         const removedToolFields = sanitizeToolFields(parsed);
 
-        if (debug) {
+        if (options.debug) {
           const effort = parsed.output_config?.effort ?? parsed.reasoning?.effort ?? "unset";
           console.error(
-            `claudex-proxy model remap: ${originalModel} -> ${forcedModel}, effort=${effort}, preserve_client_effort=${preserveClientEffort}, removed_tool_fields=${removedToolFields}`
+            `claudex-proxy model remap: ${originalModel} -> ${options.forcedModel}, effort=${effort}, preserve_client_effort=${options.preserveClientEffort}, removed_tool_fields=${removedToolFields}`
           );
         }
 
@@ -314,9 +348,8 @@ async function startProxy(
 }
 
 async function main(): Promise<void> {
-  const openAiMdPath = resolveOpenAiConfigPath();
-  const { upstreamBaseUrl, upstreamApiKey } = readOpenAiConfig(openAiMdPath);
-  const upstreamOrigin = new URL(upstreamBaseUrl);
+  const runtime = loadRuntimeConfig();
+  const upstreamOrigin = new URL(runtime.upstreamBaseUrl);
   const claudeBinary = resolveClaudeBinary();
 
   const listenHost = process.env.CLAUDEX_LISTEN_HOST || "127.0.0.1";
@@ -325,10 +358,15 @@ async function main(): Promise<void> {
     fail("invalid CLAUDEX_PORT value");
   }
 
-  const proxyServer = await startProxy(listenHost, listenPort, upstreamOrigin, upstreamApiKey);
-  const proxyUrl = `http://${listenHost}:${listenPort}`;
+  const proxyServer = await startProxy(listenHost, listenPort, upstreamOrigin, runtime.upstreamApiKey, {
+    forcedModel: runtime.forcedModel,
+    defaultReasoningEffort,
+    preserveClientEffort,
+    debug,
+  });
 
-  console.error(`claudex: proxy=${proxyUrl} force_model=${forcedModel}`);
+  const proxyUrl = `http://${listenHost}:${listenPort}`;
+  console.error(`claudex: proxy=${proxyUrl} force_model=${runtime.forcedModel}`);
 
   const child = spawn(claudeBinary, args, {
     stdio: "inherit",
@@ -336,12 +374,12 @@ async function main(): Promise<void> {
       ...process.env,
       ANTHROPIC_BASE_URL: proxyUrl,
       ANTHROPIC_API_KEY: "claudex-local",
-      ANTHROPIC_MODEL: forcedModel,
-      ANTHROPIC_SMALL_FAST_MODEL: forcedModel,
-      ANTHROPIC_DEFAULT_OPUS_MODEL: forcedModel,
-      ANTHROPIC_DEFAULT_SONNET_MODEL: forcedModel,
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: forcedModel,
-      CLAUDE_CODE_SUBAGENT_MODEL: forcedModel,
+      ANTHROPIC_MODEL: runtime.forcedModel,
+      ANTHROPIC_SMALL_FAST_MODEL: runtime.forcedModel,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: runtime.forcedModel,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: runtime.forcedModel,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: runtime.forcedModel,
+      CLAUDE_CODE_SUBAGENT_MODEL: runtime.forcedModel,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     },
   });

@@ -12,7 +12,13 @@ You can get binary from [Releases](https://github.com/EdamAme-x/claudex/releases
 bun install
 ```
 
-1. Put `OPENAI.md` next to `./claudex`.
+1. Ensure Codex config files exist:
+
+```text
+~/.codex/config.toml
+~/.codex/auth.json
+```
+
 2. Run:
 
 ```bash
@@ -21,10 +27,14 @@ bun install
 
 Optional environment variables:
 
-- `CLAUDEX_FORCE_MODEL` (default: `gpt-5.3-codex`)
+- `CLAUDEX_FORCE_MODEL` (default: value from `~/.codex/config.toml` `model`, fallback `gpt-5.3-codex`)
 - `CLAUDEX_DEFAULT_REASONING_EFFORT` (default: `xhigh`)
 - `CLAUDEX_CLAUDE_BIN`
-- `CLAUDEX_OPENAI_MD`
+- `CLAUDEX_CODEX_CONFIG` (override `~/.codex/config.toml`)
+- `CLAUDEX_CODEX_AUTH` (override `~/.codex/auth.json`)
+- `CLAUDEX_MODEL_PROVIDER` (override `model_provider` selection)
+- `CLAUDEX_UPSTREAM_BASE_URL` (force endpoint URL)
+- `CLAUDEX_UPSTREAM_API_KEY` (force API key)
 - `CLAUDEX_PORT`
 - `CLAUDEX_DEBUG=1`
 
