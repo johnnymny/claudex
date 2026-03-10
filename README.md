@@ -2,6 +2,15 @@
 
 `claudex` is a Bun-based launcher that runs Claude Code against an OpenAI-compatible endpoint.
 
+## Fork-specific changes
+
+This fork currently adds:
+- Responses-only sanitization of unsupported Anthropic top-level request fields such as `temperature`
+- Preservation of those fields on `messages` upstreams
+- A Windows-local ChatGPT-token launcher workflow (`launch-claudex.py`, `start-claudex.bat`)
+- Restore-safe wrapper behavior for temporary `auth.json` / `config.toml` mutations
+- Release binaries published from this fork's GitHub Releases
+
 You can download binaries from this repository's [Releases](../../releases).
 
 ## Local usage
