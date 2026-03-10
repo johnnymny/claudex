@@ -2,7 +2,7 @@
 
 `claudex` is a Bun-based launcher that runs Claude Code against an OpenAI-compatible endpoint.
 
-You can download binaries from [Releases](https://github.com/EdamAme-x/claudex/releases).
+You can download binaries from this repository's [Releases](../../releases).
 
 ## Local usage
 
@@ -36,6 +36,7 @@ This wrapper is not a general cross-machine entrypoint. It assumes:
 - `~/.codex/auth.json`
 - `~/.codex/config.toml`
 - a machine-specific `WORK_DIR` inside the script
+- temporary mutation of `auth.json` / `config.toml` for ChatGPT-token routing, with restoration on exit
 
 Repository-local batch launchers are also included for the same local workflow:
 
@@ -83,7 +84,8 @@ Authentication note:
 - Priority is:
   1. Use `model_provider` / `CLAUDEX_UPSTREAM_BASE_URL` when resolvable, authenticated via API key.
   2. If no provider is resolvable, fall back to official ChatGPT endpoint (`https://chatgpt.com/backend-api/codex`) and use `tokens.access_token` (then `tokens.id_token`) from `~/.codex/auth.json`.
-- When the upstream uses `wire_api = "responses"` (or ChatGPT fallback mode), `claudex` now translates Anthropic `POST /v1/messages` requests, tools, and tool results to the OpenAI Responses API and maps streamed tool calls back into Anthropic `tool_use` blocks.
+- When the upstream uses `wire_api = "responses"` (or ChatGPT fallback mode), `claudex` translates Anthropic `POST /v1/messages` requests, tools, and tool results to the OpenAI Responses API and maps streamed tool calls back into Anthropic `tool_use` blocks.
+- On `responses` upstreams, `claudex` strips unsupported Anthropic top-level request fields such as `temperature` before forwarding. On `messages` upstreams, those fields are preserved.
 - In token mode, `claudex` automatically refreshes expired tokens via `tokens.refresh_token` when possible.
 - In token mode, if `tokens.account_id` exists, `claudex` sends it as `ChatGPT-Account-Id`.
 - To avoid model-availability errors on ChatGPT accounts, `claudex` uses `gpt-5-codex` as the implicit default model in ChatGPT mode (unless you explicitly set `model` or `CLAUDEX_FORCE_MODEL`).
