@@ -1,120 +1,136 @@
 # claudex
 
-`claudex` is a Bun-based launcher that runs Claude Code against an OpenAI-compatible endpoint.
+日本語版READMEです。English version: [README.en.md](./README.en.md)
 
-## Fork-specific changes
+`claudex` は、Claude Code を OpenAI 互換 endpoint / ChatGPT Codex backend に接続するための Bun ベース launcher です。
 
-This fork currently adds:
-- Responses-only sanitization of unsupported Anthropic top-level request fields such as `temperature`
-- Preservation of those fields on `messages` upstreams
-- A Windows-local ChatGPT-token launcher workflow (`launch-claudex.py`, `start-claudex.bat`)
-- Restore-safe wrapper behavior for temporary `auth.json` / `config.toml` mutations
-- Release binaries published from this fork's GitHub Releases
+## この fork で追加したこと
 
-You can download binaries from this repository's [Releases](../../releases).
+この fork では主に次を追加しています。
 
-## Local usage
+- `responses` upstream 向けに、`temperature` など未対応の Anthropic top-level request field を sanitize
+- `messages` upstream ではそれらの field を保持
+- Windows ローカル運用向け ChatGPT-token launcher (`launch-claudex.py`, `start-claudex.bat`) を同梱
+- wrapper が `auth.json` / `config.toml` を一時変更しても終了時に復元するよう安全化
+- GitHub Releases をこの fork 側から発行
 
-0. Install dependencies:
+バイナリはこの repo の [Releases](../../releases) から取得できます。
+
+## ローカル使用方法
+
+### 0. 依存関係
 
 ```bash
 bun install
 ```
 
-1. Ensure Codex auth file exists (config is optional but recommended):
+### 1. Codex 認証ファイルを用意
+
+config は必須ではありませんが、通常は次を想定します。
 
 ```text
 ~/.codex/auth.json
 ~/.codex/config.toml
 ```
 
-2. Run:
+### 2. 通常起動
 
 ```bash
 ./claudex
 ```
 
-Windows-local launcher wrapper for one specific ChatGPT-token workflow:
+## Windows ローカル wrapper
+
+特定の ChatGPT-token 運用向けに、Windows ローカル wrapper を同梱しています。
 
 ```bash
 python launch-claudex.py
 ```
 
-This wrapper is not a general cross-machine entrypoint. It assumes:
-- a repo-local `claudex-windows-x64.exe`
-- `~/.codex/auth.json`
-- `~/.codex/config.toml`
-- a machine-specific `WORK_DIR` inside the script
-- temporary mutation of `auth.json` / `config.toml` for ChatGPT-token routing, with restoration on exit
+この wrapper は汎用・移植可能な entrypoint ではありません。前提は次の通りです。
 
-Repository-local batch launchers are also included for the same local workflow:
+- repo ローカルに `claudex-windows-x64.exe` があること
+- `~/.codex/auth.json` があること
+- `~/.codex/config.toml` があること
+- script 内の `WORK_DIR` がそのマシンに合っていること
+- ChatGPT-token routing のために `auth.json` / `config.toml` を一時変更し、終了時に復元すること
+
+同じローカル運用向けに、batch launcher も含めています。
 
 ```text
 start-claudex.bat
 start.bat
 ```
 
-If you want a portable setup, use `./claudex` or a compiled release binary instead.
+移植性を優先する場合は、`./claudex` か release binary を使ってください。
 
-Wrapper flags:
+## Wrapper flags
 
-- `--model <id>` / `--upstream-model <id>`: override the upstream OpenAI model for this run only. `claudex` consumes this flag itself and does not forward it to the Claude binary.
-- `--no-safe`: disables `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` for that run.
-- By default, `claudex` enables safe mode (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`).
+- `--model <id>` / `--upstream-model <id>`: その実行だけ upstream OpenAI model を上書き。`claudex` 自身が消費し、Claude binary には渡しません
+- `--no-safe`: その実行だけ `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` を無効化
+- デフォルトでは safe mode (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`) を有効化
 
-Example:
+例:
 
 ```bash
 ./claudex --model gpt-5.5-chat
 ```
 
-Optional environment variables:
+## 環境変数
 
-- `CLAUDEX_FORCE_MODEL` (used when no CLI `--model` / `--upstream-model` is given; otherwise CLI wins. Default: value of `model` from `~/.codex/config.toml`; fallback: `gpt-5.3-codex`)
+- `CLAUDEX_FORCE_MODEL`
+  - CLI の `--model` / `--upstream-model` が無い時だけ使用
+  - 既定: `~/.codex/config.toml` の `model`
+  - fallback: `gpt-5.3-codex`
 - `CLAUDEX_DEFAULT_REASONING_EFFORT` (default: `xhigh`)
 - `CLAUDEX_CLAUDE_BIN`
-- `CLAUDEX_CODEX_CONFIG` (overrides `~/.codex/config.toml`)
-- `CLAUDEX_CODEX_AUTH` (overrides `~/.codex/auth.json`)
-- `CLAUDEX_MODEL_PROVIDER` (overrides `model_provider` selection)
-- `CLAUDEX_UPSTREAM_BASE_URL` (force endpoint URL)
-- `CLAUDEX_UPSTREAM_WIRE_API` (`messages` or `responses`; overrides provider `wire_api`)
-- `CLAUDEX_UPSTREAM_API_KEY` (force API key)
-- `CLAUDEX_UPSTREAM_BEARER_TOKEN` (force bearer token for ChatGPT token mode)
-- `CLAUDEX_CHATGPT_BEARER_TOKEN` (alias of `CLAUDEX_UPSTREAM_BEARER_TOKEN`)
-- `CLAUDEX_CHATGPT_ACCOUNT_ID` (override `ChatGPT-Account-Id` header)
+- `CLAUDEX_CODEX_CONFIG` (`~/.codex/config.toml` override)
+- `CLAUDEX_CODEX_AUTH` (`~/.codex/auth.json` override)
+- `CLAUDEX_MODEL_PROVIDER` (`model_provider` selection override)
+- `CLAUDEX_UPSTREAM_BASE_URL` (endpoint URL 強制指定)
+- `CLAUDEX_UPSTREAM_WIRE_API` (`messages` or `responses`; provider `wire_api` override)
+- `CLAUDEX_UPSTREAM_API_KEY`
+- `CLAUDEX_UPSTREAM_BEARER_TOKEN`
+- `CLAUDEX_CHATGPT_BEARER_TOKEN` (`CLAUDEX_UPSTREAM_BEARER_TOKEN` の alias)
+- `CLAUDEX_CHATGPT_ACCOUNT_ID` (`ChatGPT-Account-Id` header override)
 - `CLAUDEX_CHATGPT_BASE_URL` (default: `https://chatgpt.com/backend-api/codex`)
-- `CLAUDEX_CHATGPT_DEFAULT_MODEL` (default: `gpt-5-codex` when ChatGPT mode is active and no model is explicitly configured)
-- `CLAUDEX_FORCE_LOGIN_METHOD` (default: `console`; set to `none` to disable injection)
+- `CLAUDEX_CHATGPT_DEFAULT_MODEL` (ChatGPT mode で model 未指定時の default: `gpt-5-codex`)
+- `CLAUDEX_FORCE_LOGIN_METHOD` (default: `console`; `none` で injection 無効)
 - `CLAUDEX_PORT`
 - `CLAUDEX_DEBUG=1`
 
-Authentication note:
+## 認証と upstream 動作
 
-- Priority is:
-  1. Use `model_provider` / `CLAUDEX_UPSTREAM_BASE_URL` when resolvable, authenticated via API key.
-  2. If no provider is resolvable, fall back to official ChatGPT endpoint (`https://chatgpt.com/backend-api/codex`) and use `tokens.access_token` (then `tokens.id_token`) from `~/.codex/auth.json`.
-- When the upstream uses `wire_api = "responses"` (or ChatGPT fallback mode), `claudex` translates Anthropic `POST /v1/messages` requests, tools, and tool results to the OpenAI Responses API and maps streamed tool calls back into Anthropic `tool_use` blocks.
-- On `responses` upstreams, `claudex` strips unsupported Anthropic top-level request fields such as `temperature` before forwarding. On `messages` upstreams, those fields are preserved.
-- In token mode, `claudex` automatically refreshes expired tokens via `tokens.refresh_token` when possible.
-- In token mode, if `tokens.account_id` exists, `claudex` sends it as `ChatGPT-Account-Id`.
-- To avoid model-availability errors on ChatGPT accounts, `claudex` uses `gpt-5-codex` as the implicit default model in ChatGPT mode (unless you explicitly set `model` or `CLAUDEX_FORCE_MODEL`).
-- `claudex` sets `ANTHROPIC_API_KEY` to the upstream bearer credential and, unless you pass `--settings` yourself, injects `--settings {"forceLoginMethod":"console"}` to avoid Claude.ai-subscription-first login flows.
+優先順位は次の通りです。
+
+1. `model_provider` / `CLAUDEX_UPSTREAM_BASE_URL` が解決できる場合は API key 認証で使う
+2. 解決できない場合は ChatGPT endpoint (`https://chatgpt.com/backend-api/codex`) に fallback し、`~/.codex/auth.json` の `tokens.access_token`（次点で `tokens.id_token`）を使う
+
+補足:
+
+- upstream が `wire_api = "responses"`（または ChatGPT fallback mode）の時、`claudex` は Anthropic `POST /v1/messages` を OpenAI Responses API へ変換し、streamed tool call を Anthropic `tool_use` block に戻します
+- `responses` upstream では、`temperature` など未対応の Anthropic top-level request field を forwarding 前に除去します
+- `messages` upstream では、それらの field は保持します
+- token mode では、可能なら `tokens.refresh_token` を使って token を自動 refresh します
+- token mode で `tokens.account_id` があれば `ChatGPT-Account-Id` header として送ります
+- ChatGPT account 上の model availability error を避けるため、ChatGPT mode で model 未指定時の暗黙 default は `gpt-5-codex` です
+- `claudex` は upstream bearer credential を `ANTHROPIC_API_KEY` に設定し、`--settings` 未指定時は `--settings {"forceLoginMethod":"console"}` を注入して Claude.ai subscription 優先 login flow を避けます
 
 ## Quality gates
 
 - Typecheck: `bun run typecheck`
 - Tests: `bun test`
-- `bun test` includes an integration test that round-trips Anthropic `tool_use` / `tool_result` through a Responses upstream mock (`tests/proxy.integration.test.ts`).
+- `bun test` には、Anthropic `tool_use` / `tool_result` を Responses upstream mock 経由で round-trip する integration test (`tests/proxy.integration.test.ts`) を含みます
 - Combined check: `bun run check`
-- Enable local git hook: `bun run setup:hooks`
+- Local git hook: `bun run setup:hooks`
 
 ## Automated release
 
-GitHub Actions runs on every push to `main` and once per day:
+GitHub Actions は `main` への push と日次 schedule で動きます。
 
-1. Fetches the latest `install.sh` from `https://claude.ai/install.sh`.
-2. Extracts `GCS_BUCKET` from that script and reads the latest Claude Code version.
-3. On `push` to `main`, always creates a rolling release tag `claude-vX.Y.Z-build.<run_number>`.
-4. On scheduled/manual runs, creates `claude-vX.Y.Z` only when that upstream version is not released yet.
-5. Builds `claudex` binaries for Linux, macOS, and Windows via Bun `--compile`.
-6. Publishes a GitHub release with those binaries.
+1. `https://claude.ai/install.sh` から最新 installer を取得
+2. script から `GCS_BUCKET` を抽出し、最新 Claude Code version を読む
+3. `main` への push では、毎回 `claude-vX.Y.Z-build.<run_number>` の rolling build release を作成
+4. scheduled / manual run では、未 release の upstream version の時だけ `claude-vX.Y.Z` を作成
+5. Bun `--compile` で Linux / macOS / Windows binary を build
+6. GitHub release として publish
