@@ -12,6 +12,9 @@
 !bun.lock
 !tsconfig.json
 !claudex
+!launch-claudex.py
+!start-claudex.bat
+!start.bat
 !scripts/
 !scripts/**
 !src/

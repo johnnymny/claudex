@@ -62,6 +62,70 @@ function writeResponsesSse(res: http.ServerResponse, response: Record<string, un
 }
 
 describe("proxy integration", () => {
+  test("preserves temperature for messages upstreams", async () => {
+    const upstreamRequests: Array<{ path: string; body: Record<string, any> }> = [];
+
+    const upstreamServer = http.createServer(async (req, res) => {
+      const bodyText = await readBody(req);
+      const body = bodyText.length > 0 ? JSON.parse(bodyText) : {};
+      upstreamRequests.push({
+        path: req.url || "",
+        body,
+      });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "msg_test", type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: "OK" }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }));
+    });
+
+    const upstreamPort = await listen(upstreamServer);
+    const authState: AuthState = {
+      bearerToken: "test-token",
+      extraHeaders: {},
+    };
+
+    const proxyServer = await startProxy(
+      "127.0.0.1",
+      0,
+      new URL(`http://127.0.0.1:${upstreamPort}/v1`),
+      authState,
+      {
+        forcedModel: "gpt-5.4-mini",
+        defaultReasoningEffort: "xhigh",
+        preserveClientEffort: false,
+        debug: false,
+        safeMode: false,
+        upstreamWireApi: "messages",
+      }
+    );
+
+    const proxyAddress = proxyServer.address();
+    if (!proxyAddress || typeof proxyAddress === "string") {
+      await close(proxyServer);
+      await close(upstreamServer);
+      throw new Error("failed to read proxy port");
+    }
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${proxyAddress.port}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          stream: false,
+          temperature: 0,
+          messages: [{ role: "user", content: [{ type: "text", text: "Say OK" }] }],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(upstreamRequests).toHaveLength(1);
+      expect(upstreamRequests[0].path).toBe("/v1/messages");
+      expect(upstreamRequests[0].body.temperature).toBe(0);
+    } finally {
+      await close(proxyServer);
+      await close(upstreamServer);
+    }
+  });
+
   test("round-trips responses tool calls through anthropic messages", async () => {
     const upstreamRequests: Array<{ path: string; body: Record<string, any> }> = [];
     let requestCount = 0;
@@ -144,6 +208,7 @@ describe("proxy integration", () => {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           stream: false,
+          temperature: 0,
           messages: [{ role: "user", content: [{ type: "text", text: "Use read_file then summarize README.md" }] }],
           tools: [
             {
@@ -174,6 +239,7 @@ describe("proxy integration", () => {
       expect(upstreamRequests[0].path).toBe("/v1/responses");
       expect(upstreamRequests[0].body.model).toBe("gpt-5.4-mini");
       expect(upstreamRequests[0].body.stream).toBe(true);
+      expect(upstreamRequests[0].body.temperature).toBeUndefined();
       expect(upstreamRequests[0].body.tools).toEqual([
         {
           type: "function",

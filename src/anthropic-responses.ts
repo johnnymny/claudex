@@ -63,6 +63,24 @@ export function applyDefaultEffort(
   body.reasoning.effort = options.defaultReasoningEffort;
 }
 
+const UNSUPPORTED_TOP_LEVEL_FIELDS = ["temperature"] as const;
+
+export function sanitizeUnsupportedRequestFields(body: JsonObject): number {
+  let removed = 0;
+  if (!body || typeof body !== "object") {
+    return removed;
+  }
+
+  for (const field of UNSUPPORTED_TOP_LEVEL_FIELDS) {
+    if (field in body) {
+      delete body[field];
+      removed += 1;
+    }
+  }
+
+  return removed;
+}
+
 export function sanitizeToolFields(body: JsonObject): number {
   let removed = 0;
   if (!Array.isArray(body?.tools)) {

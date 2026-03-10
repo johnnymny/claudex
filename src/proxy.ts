@@ -7,6 +7,7 @@ import {
   extractInstructionsFromSystem,
   mapResponsesOutputToAnthropicContent,
   sanitizeToolFields,
+  sanitizeUnsupportedRequestFields,
   toResponsesInput,
 } from "./anthropic-responses.ts";
 import {
@@ -599,11 +600,16 @@ export async function startProxy(
           preserveClientEffort: options.preserveClientEffort,
         });
         const removedToolFields = sanitizeToolFields(parsed);
+        let removedRequestFields = 0;
+
+        if (options.upstreamWireApi === "responses") {
+          removedRequestFields = sanitizeUnsupportedRequestFields(parsed);
+        }
 
         if (options.debug) {
           const effort = parsed.output_config?.effort ?? parsed.reasoning?.effort ?? "unset";
           console.error(
-            `claudex-proxy model remap: ${originalModel} -> ${options.forcedModel}, effort=${effort}, wire_api=${options.upstreamWireApi}, safe_mode=${options.safeMode}, preserve_client_effort=${options.preserveClientEffort}, removed_tool_fields=${removedToolFields}`
+            `claudex-proxy model remap: ${originalModel} -> ${options.forcedModel}, effort=${effort}, wire_api=${options.upstreamWireApi}, safe_mode=${options.safeMode}, preserve_client_effort=${options.preserveClientEffort}, removed_request_fields=${removedRequestFields}, removed_tool_fields=${removedToolFields}`
           );
         }
 

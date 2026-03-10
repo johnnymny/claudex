@@ -15,6 +15,7 @@ export {
   hasExplicitEffort,
   mapResponsesOutputToAnthropicContent,
   sanitizeToolFields,
+  sanitizeUnsupportedRequestFields,
   toResponsesInput,
 } from "./anthropic-responses.ts";
 export { mapAnthropicToolChoiceToResponsesToolChoice, mapAnthropicToolsToResponsesTools, toStrictSchema } from "./tool-schema.ts";

@@ -25,6 +25,27 @@ bun install
 ./claudex
 ```
 
+Windows-local launcher wrapper for one specific ChatGPT-token workflow:
+
+```bash
+python launch-claudex.py
+```
+
+This wrapper is not a general cross-machine entrypoint. It assumes:
+- a repo-local `claudex-windows-x64.exe`
+- `~/.codex/auth.json`
+- `~/.codex/config.toml`
+- a machine-specific `WORK_DIR` inside the script
+
+Repository-local batch launchers are also included for the same local workflow:
+
+```text
+start-claudex.bat
+start.bat
+```
+
+If you want a portable setup, use `./claudex` or a compiled release binary instead.
+
 Wrapper flags:
 
 - `--model <id>` / `--upstream-model <id>`: override the upstream OpenAI model for this run only. `claudex` consumes this flag itself and does not forward it to the Claude binary.

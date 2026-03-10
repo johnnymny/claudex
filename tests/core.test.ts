@@ -15,6 +15,7 @@ import {
   resolveForcedModel,
   resolveUpstreamFromCodexConfig,
   sanitizeToolFields,
+  sanitizeUnsupportedRequestFields,
   toResponsesInput,
 } from "../src/core.ts";
 
@@ -244,14 +245,43 @@ describe("applyDefaultEffort", () => {
   });
 });
 
+describe("sanitizeUnsupportedRequestFields", () => {
+  test("removes unsupported top-level temperature", () => {
+    const body: Record<string, any> = {
+      temperature: 0,
+      max_tokens: 128,
+    };
+    const removed = sanitizeUnsupportedRequestFields(body);
+    expect(removed).toBe(1);
+    expect(body.temperature).toBeUndefined();
+    expect(body.max_tokens).toBe(128);
+  });
+
+  test("returns 0 for null and primitives", () => {
+    expect(sanitizeUnsupportedRequestFields(null as any)).toBe(0);
+    expect(sanitizeUnsupportedRequestFields("x" as any)).toBe(0);
+    expect(sanitizeUnsupportedRequestFields(1 as any)).toBe(0);
+    expect(sanitizeUnsupportedRequestFields(true as any)).toBe(0);
+  });
+});
+
 describe("sanitizeToolFields", () => {
   test("removes defer_loading from each tool", () => {
     const body: Record<string, any> = {
+      temperature: 0,
       tools: [{ name: "a", defer_loading: true }, { name: "b" }],
     };
     const removed = sanitizeToolFields(body);
     expect(removed).toBe(1);
+    expect(body.temperature).toBe(0);
     expect(body.tools[0].defer_loading).toBeUndefined();
+  });
+
+  test("returns 0 for null and primitives", () => {
+    expect(sanitizeToolFields(null as any)).toBe(0);
+    expect(sanitizeToolFields("x" as any)).toBe(0);
+    expect(sanitizeToolFields(1 as any)).toBe(0);
+    expect(sanitizeToolFields(true as any)).toBe(0);
   });
 });
 
