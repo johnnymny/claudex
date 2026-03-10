@@ -16,7 +16,12 @@ AUTH_BACKUP = os.path.expanduser("~/.codex/auth.json.bak")
 CONFIG_PATH = os.path.expanduser("~/.codex/config.toml")
 CONFIG_BACKUP = os.path.expanduser("~/.codex/config.toml.bak")
 CLAUDEX_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claudex-windows-x64.exe")
-WORK_DIR = r"C:\Users\smbc0\claude-hanekawa"
+WORK_DIR = os.environ.get("CLAUDEX_WORK_DIR") or os.getcwd()
+
+if not WORK_DIR:
+    raise ValueError("Failed to resolve WORK_DIR. Set CLAUDEX_WORK_DIR explicitly.")
+if not os.path.isdir(WORK_DIR):
+    raise NotADirectoryError(f"Invalid work dir: {WORK_DIR}")
 
 # Auth routing model (must be a -codex model to trigger chatgpt-token mode)
 ROUTING_MODEL = "gpt-5.3-codex"

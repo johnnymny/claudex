@@ -44,8 +44,14 @@ This wrapper is not a general cross-machine entrypoint. It assumes:
 - a repo-local `claudex-windows-x64.exe`
 - `~/.codex/auth.json`
 - `~/.codex/config.toml`
-- a machine-specific `WORK_DIR` inside the script
+- `CLAUDEX_WORK_DIR` set when needed (falls back to the current working directory if unset)
 - temporary mutation of `auth.json` / `config.toml` for ChatGPT-token routing, with restoration on exit
+
+Example:
+
+```bash
+CLAUDEX_WORK_DIR=/path/to/project python launch-claudex.py
+```
 
 Repository-local batch launchers are also included for the same local workflow:
 

@@ -52,8 +52,14 @@ python launch-claudex.py
 - repo ローカルに `claudex-windows-x64.exe` があること
 - `~/.codex/auth.json` があること
 - `~/.codex/config.toml` があること
-- script 内の `WORK_DIR` がそのマシンに合っていること
+- `CLAUDEX_WORK_DIR` を必要に応じて設定すること（未設定時は現在の working directory を使います）
 - ChatGPT-token routing のために `auth.json` / `config.toml` を一時変更し、終了時に復元すること
+
+例:
+
+```bash
+CLAUDEX_WORK_DIR=/path/to/project python launch-claudex.py
+```
 
 同じローカル運用向けに、batch launcher も含めています。
 
