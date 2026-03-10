@@ -65,7 +65,6 @@ CLAUDEX_WORK_DIR=/path/to/project python launch-claudex.py
 
 ```text
 start-claudex.bat
-start.bat
 ```
 
 移植性を優先する場合は、`./claudex` か release binary を使ってください。

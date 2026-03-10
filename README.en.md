@@ -53,11 +53,10 @@ Example:
 CLAUDEX_WORK_DIR=/path/to/project python launch-claudex.py
 ```
 
-Repository-local batch launchers are also included for the same local workflow:
+A repository-local batch launcher is also included for the same local workflow:
 
 ```text
 start-claudex.bat
-start.bat
 ```
 
 If you want a portable setup, use `./claudex` or a compiled release binary instead.
