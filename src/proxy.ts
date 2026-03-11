@@ -1,5 +1,7 @@
 import http from "node:http";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import {
   applyDefaultEffort,
@@ -25,6 +27,7 @@ export interface ProxyOptions {
   safeMode: boolean;
   workspaceSummary?: string;
   upstreamWireApi: "messages" | "responses";
+  listenPort: number;
 }
 
 function writeJson(res: http.ServerResponse, statusCode: number, data: unknown): void {
@@ -152,6 +155,136 @@ function parseSseEvents(buffered: string, handler: (eventName: string, data: any
   }
 
   return working;
+}
+
+function getUsageLogDir(): string {
+  return join(homedir(), ".claude", "claudex-usage");
+}
+
+function getUsageLogPath(listenPort: number): string {
+  return join(getUsageLogDir(), `port-${listenPort}.jsonl`);
+}
+
+function initializeUsageLog(listenPort: number, debug: boolean): void {
+  try {
+    mkdirSync(getUsageLogDir(), { recursive: true });
+    writeFileSync(getUsageLogPath(listenPort), "", "utf8");
+  } catch (error) {
+    if (debug) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`claudex: warning: failed to initialize usage log: ${message}`);
+    }
+  }
+}
+
+function appendUsageSample(
+  listenPort: number,
+  sample: {
+    timestamp: string;
+    input_tokens: number;
+    output_tokens: number;
+    model: string;
+  },
+  debug: boolean
+): void {
+  try {
+    const logPath = getUsageLogPath(listenPort);
+    mkdirSync(getUsageLogDir(), { recursive: true });
+    writeFileSync(logPath, `${JSON.stringify(sample)}\n`, { encoding: "utf8", flag: "a" });
+  } catch (error) {
+    if (debug) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`claudex: warning: failed to append usage sample: ${message}`);
+    }
+  }
+}
+
+function recordLatestUsageSample(listenPort: number, inputTokens: number, outputTokens: number, model: string, debug: boolean): void {
+  if (inputTokens <= 0 && outputTokens <= 0) {
+    return;
+  }
+  appendUsageSample(
+    listenPort,
+    {
+      timestamp: new Date().toISOString(),
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      model,
+    },
+    debug
+  );
+}
+
+function extractUsageFromJson(text: string): { inputTokens: number; outputTokens: number; model: string } {
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      inputTokens: Number(parsed?.usage?.input_tokens || 0),
+      outputTokens: Number(parsed?.usage?.output_tokens || 0),
+      model: typeof parsed?.model === "string" ? parsed.model : "",
+    };
+  } catch {
+    return { inputTokens: 0, outputTokens: 0, model: "" };
+  }
+}
+
+async function proxyRawWithUsageCapture(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  bodyBuffer: Buffer,
+  requestPath: string,
+  upstreamOrigin: URL,
+  authState: AuthState,
+  options: ProxyOptions,
+  overrideBody: JsonObject | null = null,
+  allowRefreshRetry = true
+): Promise<void> {
+  const headers = mergeRequestHeaders(req, authState);
+
+  let outboundBody = bodyBuffer;
+  if (overrideBody !== null) {
+    const payload = JSON.stringify(overrideBody);
+    outboundBody = Buffer.from(payload);
+    headers["content-type"] = "application/json";
+    headers["content-length"] = String(outboundBody.length);
+  } else if (outboundBody.length > 0) {
+    headers["content-length"] = String(outboundBody.length);
+  }
+
+  const upstreamUrl = buildUpstreamUrl(
+    upstreamOrigin,
+    rewriteRequestPath(upstreamOrigin, requestPath, options.upstreamWireApi)
+  );
+  const upstreamResponse = await fetch(upstreamUrl, {
+    method: req.method,
+    headers,
+    body: req.method === "GET" || req.method === "HEAD" ? undefined : outboundBody,
+  });
+
+  if (upstreamResponse.status === 401 && allowRefreshRetry && authState.chatgptRefreshConfig) {
+    try {
+      await refreshChatgptBearerToken(authState, options.debug);
+      await proxyRawWithUsageCapture(req, res, bodyBuffer, requestPath, upstreamOrigin, authState, options, overrideBody, false);
+      return;
+    } catch (error) {
+      if (options.debug) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`claudex: token refresh attempt failed: ${message}`);
+      }
+    }
+  }
+
+  const responseText = await upstreamResponse.text();
+  if (upstreamResponse.ok) {
+    const usage = extractUsageFromJson(responseText);
+    recordLatestUsageSample(options.listenPort, usage.inputTokens, usage.outputTokens, usage.model, options.debug);
+  }
+
+  res.writeHead(upstreamResponse.status, {
+    ...copyHeadersFromUpstream(upstreamResponse.headers),
+    "content-length": Buffer.byteLength(responseText),
+  });
+  res.end(responseText);
 }
 
 function persistRefreshedChatgptTokens(
@@ -368,6 +501,8 @@ async function proxyResponsesAsAnthropic(
     parsedContent = [{ type: "text", text }];
   }
 
+  recordLatestUsageSample(options.listenPort, usageInputTokens, usageOutputTokens, model, options.debug);
+
   if (streamRequested) {
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -522,6 +657,8 @@ export async function startProxy(
   authState: AuthState,
   options: ProxyOptions
 ): Promise<http.Server> {
+  initializeUsageLog(options.listenPort, options.debug);
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || "/", `http://${listenHost}:${listenPort}`);
@@ -626,7 +763,7 @@ export async function startProxy(
           return;
         }
 
-        await proxyRaw(req, res, bodyBuffer, url.pathname + url.search, upstreamOrigin, authState, options, parsed);
+        await proxyRawWithUsageCapture(req, res, bodyBuffer, url.pathname + url.search, upstreamOrigin, authState, options, parsed);
         return;
       }
 

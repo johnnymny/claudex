@@ -201,6 +201,7 @@ async function main(): Promise<void> {
     safeMode,
     workspaceSummary,
     upstreamWireApi: runtime.upstreamWireApi,
+    listenPort,
   });
 
   const proxyUrl = `http://${listenHost}:${listenPort}`;
